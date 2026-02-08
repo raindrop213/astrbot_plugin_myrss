@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import time
 import aiohttp
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,7 +30,9 @@ def _load_metadata() -> dict:
                 meta[key.strip()] = value.strip().strip('"')
     return meta
 
+
 _meta = _load_metadata()
+
 
 @register(_meta["name"], _meta["author"], _meta["desc"], _meta["version"].lstrip("v"))
 class MyRSSPlugin(Star):
@@ -41,8 +44,10 @@ class MyRSSPlugin(Star):
         self.scheduler = AsyncIOScheduler()
 
         # 从插件设置读取配置
-        self.max_items = config.get("max_items_per_poll", 5)
+        self.max_items = config.get("max_items_per_poll", 3)
         self.desc_max_len = config.get("description_max_length", 200)
+        self.default_cron = config.get("default_cron", "0.18.*.*.*")
+        self.default_filter = config.get("default_filter", "")
 
     async def initialize(self):
         self.scheduler.start()
@@ -72,8 +77,22 @@ class MyRSSPlugin(Star):
     # ==================== 工具方法 ====================
 
     @staticmethod
+    def _dot_to_cron(dot_expr: str) -> str:
+        """点分隔 cron → 空格分隔: 0.18.*.*.* → 0 18 * * *"""
+        parts = dot_expr.split(".")
+        if len(parts) != 5:
+            raise ValueError(f"cron 需要 5 段（分.时.日.月.星期），当前 {len(parts)} 段")
+        cron_expr = " ".join(parts)
+        # 验证合法性
+        CronTrigger(
+            minute=parts[0], hour=parts[1], day=parts[2],
+            month=parts[3], day_of_week=parts[4],
+        )
+        return cron_expr
+
+    @staticmethod
     def _validate_cron(cron_expr: str) -> dict:
-        """验证并解析 5 段 cron 表达式，返回 dict；不合法则抛异常"""
+        """验证空格分隔的 cron 表达式，返回 dict（供调度器使用）"""
         parts = cron_expr.split()
         if len(parts) != 5:
             raise ValueError(f"cron 表达式需要 5 个字段，当前有 {len(parts)} 个")
@@ -83,6 +102,17 @@ class MyRSSPlugin(Star):
         }
         CronTrigger(**fields)
         return fields
+
+    @staticmethod
+    def _filter_items(items: list[RSSItem], pattern: str) -> list[RSSItem]:
+        """按正则排除标题匹配的条目（忽略大小写）"""
+        if not pattern:
+            return items
+        try:
+            regex = re.compile(pattern, re.IGNORECASE)
+            return [item for item in items if not regex.search(item.title)]
+        except re.error:
+            return items
 
     def _get_user_subs(self, user: str) -> list[tuple[str, dict]]:
         """获取指定用户的所有订阅 [(url, info), ...]"""
@@ -163,12 +193,13 @@ class MyRSSPlugin(Star):
         logger.info(f"RSS: 已刷新定时任务，共 {len(self.scheduler.get_jobs())} 个")
 
     async def _cron_callback(self, url: str, user: str):
-        """定时任务回调：拉取新条目并一次性推送"""
+        """定时任务回调：拉取新条目，过滤后一次性推送"""
         sub = self.data.get(url, {}).get("subscribers", {}).get(user)
         if not sub:
             return
 
         rss_items = await self._poll_rss(url, max_items=self.max_items, after_ts=sub.get("last_update", 0))
+        rss_items = self._filter_items(rss_items, sub.get("filter", ""))
         if not rss_items:
             return
 
@@ -190,35 +221,60 @@ class MyRSSPlugin(Star):
 
         支持子命令: add, list, remove, get
 
-        cron 表达式 (5段): 分 时 日 月 星期
-        示例: 0 18 * * * = 每天 18:00
-              0/30 * * * * = 每 30 分钟
-              0 9-18 * * 1-5 = 工作日 9-18 点整点
+        /rss add <链接> [定时] [过滤]
+        定时格式（点分隔）: 分.时.日.月.星期
+        示例: 0.18.*.*.* = 每天18:00
+              */30.*.*.*.* = 每30分钟
+        过滤: 正则表达式，匹配标题
         """
         pass
 
     @rss.command("add")
     async def add_sub(self, event: AstrMessageEvent, url: str,
-                      minute: str, hour: str, day: str, month: str, day_of_week: str):
-        """添加 RSS 订阅
+                      cron: str = "", filter_re: str = ""):
+        """添加 RSS 订阅（重复添加同一链接则覆盖规则）
 
         Args:
             url: RSS Feed 完整地址
-            minute: cron 分钟字段
-            hour: cron 小时字段
-            day: cron 日期字段
-            month: cron 月份字段
-            day_of_week: cron 星期字段
+            cron: 定时规则，点分隔（如 0.18.*.*.*），留空用默认
+            filter_re: 过滤正则（匹配标题），留空用默认
         """
-        cron_expr = f"{minute} {hour} {day} {month} {day_of_week}"
         user = event.unified_msg_origin
 
+        # 解析 cron
         try:
-            self._validate_cron(cron_expr)
+            cron_expr = self._dot_to_cron(cron if cron else self.default_cron)
         except Exception as e:
-            yield event.plain_result(f"cron 表达式无效: {e}")
+            yield event.plain_result(f"定时规则无效: {e}")
             return
 
+        # 确定过滤规则
+        filter_pattern = filter_re if filter_re else self.default_filter
+
+        # 验证过滤正则
+        if filter_pattern:
+            try:
+                re.compile(filter_pattern)
+            except re.error as e:
+                yield event.plain_result(f"过滤正则无效: {e}")
+                return
+
+        # 检查是否已订阅（重复添加 = 覆盖规则）
+        existing = self.data.get(url, {}).get("subscribers", {}).get(user)
+        if existing:
+            existing["cron_expr"] = cron_expr
+            existing["filter"] = filter_pattern
+            self._save_data()
+            self._refresh_scheduler()
+            yield event.plain_result(
+                f"已更新订阅规则!\n"
+                f"频道: {self.data[url]['info']['title']}\n"
+                f"定时: {cron_expr}\n"
+                f"过滤: {filter_pattern or '无'}"
+            )
+            return
+
+        # 新订阅：拉取并验证 RSS 源
         feed = await self._fetch_feed(url)
         if not feed:
             yield event.plain_result(f"无法访问该 RSS 地址: {url}")
@@ -242,13 +298,17 @@ class MyRSSPlugin(Star):
         if url not in self.data:
             self.data[url] = {"info": {"title": chan_title, "description": chan_desc}, "subscribers": {}}
         self.data[url]["subscribers"][user] = {
-            "cron_expr": cron_expr, "last_update": latest_ts, "latest_link": latest_link,
+            "cron_expr": cron_expr, "filter": filter_pattern,
+            "last_update": latest_ts, "latest_link": latest_link,
         }
         self._save_data()
         self._refresh_scheduler()
 
         yield event.plain_result(
-            f"订阅成功!\n频道: {chan_title}\n描述: {chan_desc}\n定时: {cron_expr}"
+            f"订阅成功!\n"
+            f"频道: {chan_title}\n"
+            f"定时: {cron_expr}\n"
+            f"过滤: {filter_pattern or '无'}"
         )
 
     @rss.command("list")
@@ -263,7 +323,12 @@ class MyRSSPlugin(Star):
         lines = ["当前订阅列表:"]
         for i, (url, info) in enumerate(subs):
             sub = info["subscribers"][user]
-            lines.append(f"{i}. {info['info']['title']}\n   {url}\n   定时: {sub['cron_expr']}")
+            f = sub.get("filter", "")
+            lines.append(
+                f"{i}. {info['info']['title']}\n"
+                f"   {url}\n"
+                f"   定时: {sub['cron_expr']}  |  过滤: {f or '无'}"
+            )
         yield event.plain_result("\n".join(lines))
 
     @rss.command("remove")
@@ -302,8 +367,10 @@ class MyRSSPlugin(Star):
             yield event.plain_result("索引无效，请使用 /rss list 查看。")
             return
 
-        url, _ = subs[idx]
+        url, info = subs[idx]
+        sub = info["subscribers"][user]
         rss_items = await self._poll_rss(url, max_items=self.max_items, after_ts=0)
+        rss_items = self._filter_items(rss_items, sub.get("filter", ""))
         if not rss_items:
             yield event.plain_result("暂无内容。")
             return

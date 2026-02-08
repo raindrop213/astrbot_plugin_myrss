@@ -1,10 +1,24 @@
 {
+    "default_cron": {
+        "description": "默认定时规则（分.时.日.月.星期）",
+        "type": "string",
+        "hint": "点分隔格式，如 0.18.*.*.* 表示每天18:00，*/30.*.*.*.* 表示每30分钟",
+        "obvious_hint": true,
+        "default": "0.18.*.*.*"
+    },
+    "default_filter": {
+        "description": "默认过滤正则（匹配标题）",
+        "type": "string",
+        "hint": "留空表示不过滤。如填 720 则排除标题含720的条目，用|分割多个过滤条件，如 720|480",
+        "obvious_hint": true,
+        "default": ""
+    },
     "max_items_per_poll": {
         "description": "每次推送/获取的最大条目数",
         "type": "int",
         "hint": "每次定时推送或手动获取时最多拉取几条。",
         "obvious_hint": true,
-        "default": 5
+        "default": 3
     },
     "description_max_length": {
         "description": "推送的描述最大长度，超过会被截取",

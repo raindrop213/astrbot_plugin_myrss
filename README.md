@@ -44,4 +44,4 @@
 
 编辑 `formatters.py`，继承 `DefaultFormatter` 重写 `_extract_fields`，注册域名即可。
 
-已内置：nyaa.si、share.dmhy.org、mikan.tangbai.cc
+已内置：nyaa.si、share.dmhy.org、share.acgnx.se、mikan.tangbai.cc

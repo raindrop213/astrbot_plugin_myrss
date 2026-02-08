@@ -78,25 +78,11 @@ class MyRSSPlugin(Star):
     # ==================== 工具方法 ====================
 
     @staticmethod
-    def _dot_to_cron(dot_expr: str) -> str:
-        """点分隔 cron → 空格分隔: 0.18.*.*.* → 0 18 * * *"""
+    def _parse_cron(dot_expr: str) -> dict:
+        """验证点分隔 cron（分.时.日.月.星期），返回调度器参数"""
         parts = dot_expr.split(".")
         if len(parts) != 5:
             raise ValueError(f"cron 需要 5 段（分.时.日.月.星期），当前 {len(parts)} 段")
-        cron_expr = " ".join(parts)
-        # 验证合法性
-        CronTrigger(
-            minute=parts[0], hour=parts[1], day=parts[2],
-            month=parts[3], day_of_week=parts[4],
-        )
-        return cron_expr
-
-    @staticmethod
-    def _validate_cron(cron_expr: str) -> dict:
-        """验证空格分隔的 cron 表达式，返回 dict（供调度器使用）"""
-        parts = cron_expr.split()
-        if len(parts) != 5:
-            raise ValueError(f"cron 表达式需要 5 个字段，当前有 {len(parts)} 个")
         fields = {
             "minute": parts[0], "hour": parts[1], "day": parts[2],
             "month": parts[3], "day_of_week": parts[4],
@@ -186,7 +172,7 @@ class MyRSSPlugin(Star):
                 try:
                     self.scheduler.add_job(
                         self._cron_callback, "cron",
-                        **self._validate_cron(sub["cron_expr"]),
+                        **self._parse_cron(sub["cron_expr"]),
                         args=[url, user],
                     )
                 except Exception as e:
@@ -242,9 +228,10 @@ class MyRSSPlugin(Star):
         """
         user = event.unified_msg_origin
 
-        # 解析 cron
+        # 验证 cron
+        cron_expr = cron if cron else self.default_cron
         try:
-            cron_expr = self._dot_to_cron(cron if cron else self.default_cron)
+            self._parse_cron(cron_expr)
         except Exception as e:
             yield event.plain_result(f"定时规则无效: {e}")
             return

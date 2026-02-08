@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "max_items_per_get": {
+      "type": "integer",
+      "title": "手动获取条数",
+      "description": "/rss get 命令返回的最大条目数量",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 50
+    },
+    "max_items_per_poll": {
+      "type": "integer",
+      "title": "定时推送条数",
+      "description": "每次定时拉取时推送的最大条目数量",
+      "default": 5,
+      "minimum": 1,
+      "maximum": 50
+    },
+    "description_max_length": {
+      "type": "integer",
+      "title": "描述截断长度",
+      "description": "RSS 条目描述的最大字符数，超出部分将被截断",
+      "default": 200,
+      "minimum": 0,
+      "maximum": 2000
+    }
+  }
+}

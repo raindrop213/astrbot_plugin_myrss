@@ -3,7 +3,6 @@ import json
 import time
 import re
 import aiohttp
-import logging
 from html import unescape
 from dataclasses import dataclass
 from typing import List, Optional
@@ -17,6 +16,10 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 import astrbot.api.message_components as Comp
 
+try:
+    from .format_handler import format_item
+except ImportError:
+    from format_handler import format_item
 
 DATA_FILE = "data/astrbot_plugin_myrss_data.json"
 
@@ -34,11 +37,24 @@ class RSSItem:
 
 @register("astrbot_plugin_myrss", "YourName", "简单 RSS 订阅插件，支持 cron 定时推送", "1.0.0")
 class MyRSSPlugin(Star):
-    def __init__(self, context: Context):
+    def __init__(self, context: Context, config: dict = None):
         super().__init__(context)
         self.context = context
+        self.config = config or {}
         self.data: dict = self._load_data()
         self.scheduler = AsyncIOScheduler()
+
+    @property
+    def max_items_per_get(self) -> int:
+        return self.config.get("max_items_per_get", 5)
+
+    @property
+    def max_items_per_poll(self) -> int:
+        return self.config.get("max_items_per_poll", 5)
+
+    @property
+    def desc_max_len(self) -> int:
+        return self.config.get("description_max_length", 200)
 
     async def initialize(self):
         """插件初始化：启动定时任务调度器"""
@@ -49,12 +65,10 @@ class MyRSSPlugin(Star):
     async def terminate(self):
         """插件销毁：关闭调度器"""
         self.scheduler.shutdown(wait=False)
-        logger.info("MyRSS 插件已停止")
 
     # ==================== 数据持久化 ====================
 
     def _load_data(self) -> dict:
-        """从 JSON 文件加载订阅数据"""
         if os.path.exists(DATA_FILE):
             try:
                 with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -64,7 +78,6 @@ class MyRSSPlugin(Star):
         return {}
 
     def _save_data(self):
-        """保存订阅数据到 JSON 文件"""
         os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
@@ -73,7 +86,6 @@ class MyRSSPlugin(Star):
 
     @staticmethod
     def _strip_html(text: str) -> str:
-        """去除 HTML 标签，返回纯文本"""
         if not text:
             return ""
         text = unescape(text)
@@ -81,7 +93,6 @@ class MyRSSPlugin(Star):
         return re.sub(r'\n{2,}', '\n', text).strip()
 
     async def _fetch_feed_text(self, url: str) -> Optional[str]:
-        """异步请求 RSS 源，返回响应文本"""
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
@@ -93,17 +104,16 @@ class MyRSSPlugin(Star):
             ) as session:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        logger.error(f"RSS: 站点 {url} 返回状态码 {resp.status}")
+                        logger.warning(f"RSS: {url} 返回 {resp.status}")
                         return None
                     return await resp.text()
         except Exception as e:
-            logger.error(f"RSS: 请求 {url} 失败: {e}")
+            logger.warning(f"RSS: 请求失败 {url}: {e}")
             return None
 
     async def _poll_rss(
         self, url: str, max_items: int = 5, after_ts: int = 0
     ) -> List[RSSItem]:
-        """拉取 RSS 并解析，返回比 after_ts 更新的条目列表"""
         text = await self._fetch_feed_text(url)
         if not text:
             return []
@@ -111,16 +121,16 @@ class MyRSSPlugin(Star):
         feed = feedparser.parse(text)
         chan_title = feed.feed.get("title", "未知频道")
         items: List[RSSItem] = []
+        max_desc = self.desc_max_len
 
         for entry in feed.entries:
             title = entry.get("title", "无标题")
             link = entry.get("link", "")
             desc_raw = entry.get("description", "") or entry.get("summary", "")
             description = self._strip_html(desc_raw)
-            if len(description) > 200:
-                description = description[:200] + "..."
+            if max_desc > 0 and len(description) > max_desc:
+                description = description[:max_desc] + "..."
 
-            # 解析发布时间
             pub_parsed = entry.get("published_parsed") or entry.get("updated_parsed")
             if pub_parsed:
                 pub_ts = int(time.mktime(pub_parsed))
@@ -129,7 +139,6 @@ class MyRSSPlugin(Star):
                 pub_ts = 0
                 pub_date_str = ""
 
-            # 只保留比上次更新时间戳更新的条目
             if pub_ts > after_ts:
                 items.append(
                     RSSItem(chan_title, title, link, description, pub_date_str, pub_ts)
@@ -139,11 +148,23 @@ class MyRSSPlugin(Star):
 
         return items
 
+    # ==================== 格式化 ====================
+
+    def _format_item(self, url: str, item: RSSItem) -> str:
+        """使用 format_handler 格式化单条 RSS 条目"""
+        return format_item(
+            url=url,
+            chan_title=item.chan_title,
+            title=item.title,
+            link=item.link,
+            description=item.description,
+            pub_date=item.pub_date,
+        )
+
     # ==================== 定时任务 ====================
 
     @staticmethod
     def _parse_cron(cron_expr: str) -> dict:
-        """将 5 段 cron 表达式解析为 dict"""
         parts = cron_expr.split()
         if len(parts) != 5:
             raise ValueError(f"cron 表达式需要 5 个字段，当前有 {len(parts)} 个")
@@ -157,7 +178,6 @@ class MyRSSPlugin(Star):
 
     @staticmethod
     def _validate_cron(cron_expr: str):
-        """验证 cron 表达式是否合法，不合法则抛出异常"""
         parts = cron_expr.split()
         if len(parts) != 5:
             raise ValueError(f"cron 表达式需要 5 个字段，当前有 {len(parts)} 个")
@@ -170,7 +190,6 @@ class MyRSSPlugin(Star):
         )
 
     def _refresh_scheduler(self):
-        """根据当前订阅数据，刷新全部定时任务"""
         self.scheduler.remove_all_jobs()
         for url, info in self.data.items():
             for user, sub in info.get("subscribers", {}).items():
@@ -182,35 +201,25 @@ class MyRSSPlugin(Star):
                         args=[url, user],
                     )
                 except Exception as e:
-                    logger.error(f"RSS: 添加定时任务失败 {url} -> {user}: {e}")
-        logger.info(f"RSS: 已刷新定时任务，共 {len(self.scheduler.get_jobs())} 个")
+                    logger.warning(f"RSS: 添加任务失败 {url}: {e}")
 
     async def _cron_callback(self, url: str, user: str):
-        """定时任务回调：拉取 RSS 新条目并推送"""
         if url not in self.data or user not in self.data[url].get("subscribers", {}):
             return
 
         sub = self.data[url]["subscribers"][user]
         last_update = sub.get("last_update", 0)
 
-        rss_items = await self._poll_rss(url, max_items=5, after_ts=last_update)
+        rss_items = await self._poll_rss(url, max_items=self.max_items_per_poll, after_ts=last_update)
         if not rss_items:
-            logger.debug(f"RSS: {url} 无更新 -> {user}")
             return
 
-        # 逐条推送
-        for item in rss_items:
-            text = (
-                f"[RSS] {item.chan_title}\n"
-                f"标题: {item.title}\n"
-                f"链接: {item.link}\n"
-            )
-            if item.pub_date:
-                text += f"时间: {item.pub_date}\n"
-            text += f"---\n{item.description}"
+        # 合并为一条消息推送
+        parts = [self._format_item(url, item) for item in rss_items]
+        text = "\n\n".join(parts)
 
-            chain = MessageChain(chain=[Comp.Plain(text)])
-            await self.context.send_message(user, chain)
+        chain = MessageChain(chain=[Comp.Plain(text)])
+        await self.context.send_message(user, chain)
 
         # 更新最后拉取时间戳
         max_ts = max(item.pub_date_timestamp for item in rss_items)
@@ -218,7 +227,6 @@ class MyRSSPlugin(Star):
             sub["last_update"] = max_ts
         sub["latest_link"] = rss_items[0].link
         self._save_data()
-        logger.info(f"RSS: {url} 推送 {len(rss_items)} 条 -> {user}")
 
     # ==================== 用户指令 ====================
 
@@ -226,17 +234,15 @@ class MyRSSPlugin(Star):
     def rss(self):
         """RSS 订阅管理
 
-        支持子命令: add-url, list, remove, get
+        子命令: add, list, remove, get
 
         cron 表达式 (5段): 分 时 日 月 星期
         示例: 0 18 * * * = 每天 18:00
-              0/30 * * * * = 每 30 分钟
-              0 9-18 * * 1-5 = 工作日 9-18 点整点
         """
         pass
 
-    @rss.command("add-url")
-    async def add_url(
+    @rss.command("add")
+    async def add(
         self,
         event: AstrMessageEvent,
         url: str,
@@ -246,27 +252,25 @@ class MyRSSPlugin(Star):
         month: str,
         day_of_week: str,
     ):
-        """通过 URL 直接添加 RSS 订阅
+        """添加 RSS 订阅
 
         Args:
-            url: RSS Feed 完整地址
-            minute: cron 分钟字段
-            hour: cron 小时字段
-            day: cron 日期字段
-            month: cron 月份字段
-            day_of_week: cron 星期字段
+            url: RSS Feed 地址
+            minute: cron 分钟
+            hour: cron 小时
+            day: cron 日期
+            month: cron 月份
+            day_of_week: cron 星期
         """
         cron_expr = f"{minute} {hour} {day} {month} {day_of_week}"
         user = event.unified_msg_origin
 
-        # 验证 cron 表达式
         try:
             self._validate_cron(cron_expr)
         except Exception as e:
             yield event.plain_result(f"cron 表达式无效: {e}")
             return
 
-        # 拉取并验证 RSS 源
         text = await self._fetch_feed_text(url)
         if text is None:
             yield event.plain_result(f"无法访问该 RSS 地址: {url}")
@@ -278,9 +282,8 @@ class MyRSSPlugin(Star):
             return
 
         chan_title = feed.feed.get("title", "未知频道")
-        chan_desc = feed.feed.get("description", "") or "无描述"
 
-        # 获取最新条目的时间戳，作为订阅起点（避免推送历史内容）
+        # 记录最新条目时间戳作为起点
         latest_ts = int(time.time())
         latest_link = ""
         if feed.entries:
@@ -290,10 +293,9 @@ class MyRSSPlugin(Star):
                 latest_ts = int(time.mktime(parsed_time))
             latest_link = entry.get("link", "")
 
-        # 保存订阅
         if url not in self.data:
             self.data[url] = {
-                "info": {"title": chan_title, "description": chan_desc},
+                "info": {"title": chan_title},
                 "subscribers": {},
             }
         self.data[url]["subscribers"][user] = {
@@ -305,10 +307,7 @@ class MyRSSPlugin(Star):
         self._refresh_scheduler()
 
         yield event.plain_result(
-            f"订阅成功!\n"
-            f"频道: {chan_title}\n"
-            f"描述: {chan_desc}\n"
-            f"定时: {cron_expr}"
+            f"订阅成功!\n频道: {chan_title}\n定时: {cron_expr}"
         )
 
     @rss.command("list")
@@ -351,7 +350,6 @@ class MyRSSPlugin(Star):
         title = self.data[url]["info"]["title"]
         del self.data[url]["subscribers"][user]
 
-        # 如果没有订阅者了，清理该 URL
         if not self.data[url]["subscribers"]:
             del self.data[url]
 
@@ -361,7 +359,7 @@ class MyRSSPlugin(Star):
 
     @rss.command("get")
     async def get_latest(self, event: AstrMessageEvent, idx: int):
-        """立即获取指定订阅的最新内容
+        """获取指定订阅的最新内容
 
         Args:
             idx: 订阅索引，可通过 /rss list 查看
@@ -376,19 +374,11 @@ class MyRSSPlugin(Star):
             return
 
         url = subs_urls[idx]
-        # after_ts=0 表示获取所有条目（不过滤时间）
-        rss_items = await self._poll_rss(url, max_items=3, after_ts=0)
+        rss_items = await self._poll_rss(url, max_items=self.max_items_per_get, after_ts=0)
         if not rss_items:
             yield event.plain_result("暂无内容。")
             return
 
-        for item in rss_items:
-            text = (
-                f"[RSS] {item.chan_title}\n"
-                f"标题: {item.title}\n"
-                f"链接: {item.link}\n"
-            )
-            if item.pub_date:
-                text += f"时间: {item.pub_date}\n"
-            text += f"---\n{item.description}"
-            yield event.plain_result(text)
+        # 合并为一条消息返回
+        parts = [self._format_item(url, item) for item in rss_items]
+        yield event.plain_result("\n\n".join(parts))

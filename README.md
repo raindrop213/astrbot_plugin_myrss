@@ -1,9 +1,84 @@
-# helloworld
+# astrbot_plugin_myrss
 
-AstrBot 插件模板
+一个简单的 AstrBot RSS 订阅插件，支持通过直接 URL 订阅 RSS 源，并使用 cron 表达式设置定时拉取与推送。
 
-A template plugin for AstrBot plugin feature
+## 功能
 
-# 支持
+- 通过完整 URL 直接订阅任意 RSS/Atom 源
+- 自定义 cron 定时规则，灵活控制拉取频率
+- 自动去重，仅推送订阅后的新条目
+- 支持查看、删除订阅及手动获取最新内容
+- 数据本地持久化，重启后自动恢复
 
-- [插件开发文档](https://docs.astrbot.app/dev/star/plugin-new.html)
+## 安装
+
+在 AstrBot 中安装本插件后，会自动安装依赖 `feedparser`。
+
+## 指令说明
+
+所有指令以 `/rss` 开头。
+
+### 添加订阅
+
+```
+/rss add-url <RSS地址> <分> <时> <日> <月> <星期>
+```
+
+示例：每天 18:00 检查 nyaa.si 的 RSS 源：
+
+```
+/rss add-url https://nyaa.si/?page=rss&q=TMW&c=0_0&f=0 0 18 * * *
+```
+
+### 查看订阅列表
+
+```
+/rss list
+```
+
+### 删除订阅
+
+```
+/rss remove <索引>
+```
+
+索引可通过 `/rss list` 查看。
+
+### 手动获取最新内容
+
+```
+/rss get <索引>
+```
+
+立即拉取指定订阅的最新 3 条内容。
+
+## Cron 表达式
+
+采用 5 段格式：`分 时 日 月 星期`
+
+| 字段 | 取值范围 | 说明 |
+|------|---------|------|
+| 分钟 | 0-59 | `*` 表示每分钟 |
+| 小时 | 0-23 | `*` 表示每小时 |
+| 日期 | 1-31 | `*` 表示每天 |
+| 月份 | 1-12 | `*` 表示每月 |
+| 星期 | 0-6 | 0 = 周日，`*` 表示不限 |
+
+常用示例：
+
+| 表达式 | 含义 |
+|--------|------|
+| `0 18 * * *` | 每天 18:00 |
+| `0/30 * * * *` | 每 30 分钟 |
+| `0 9-18 * * 1-5` | 工作日 9:00-18:00 整点 |
+| `0 0 1,15 * *` | 每月 1 号和 15 号 0:00 |
+
+## 依赖
+
+- [feedparser](https://pypi.org/project/feedparser/) -- RSS/Atom 解析
+- [apscheduler](https://pypi.org/project/APScheduler/) -- 定时任务调度
+- [aiohttp](https://pypi.org/project/aiohttp/) -- 异步 HTTP 请求
+
+## 参考
+
+- [AstrBot 插件开发文档](https://docs.astrbot.app/dev/star/plugin-new.html)

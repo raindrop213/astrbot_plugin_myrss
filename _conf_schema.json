@@ -1,0 +1,16 @@
+{
+    "max_items_per_poll": {
+        "description": "每次推送/获取的最大条目数",
+        "type": "int",
+        "hint": "每次定时推送或手动获取时最多拉取几条。",
+        "obvious_hint": true,
+        "default": 5
+    },
+    "description_max_length": {
+        "description": "推送的描述最大长度，超过会被截取",
+        "type": "int",
+        "hint": "RSS 条目描述的最大字符数。",
+        "obvious_hint": true,
+        "default": 200
+    }
+}

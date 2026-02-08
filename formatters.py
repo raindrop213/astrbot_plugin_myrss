@@ -116,11 +116,11 @@ class NyaaFormatter(DefaultFormatter):
 
 
 class DmhyFormatter(DefaultFormatter):
-    """动漫花园 — 跳过描述，从 URL 的 keyword 参数取频道名"""
+    """动漫花园 — 从 URL 的 keyword 参数生成频道名"""
 
     def get_chan_title(self, feed, url: str) -> str:
         kw = _get_url_param(url, "keyword")
-        return f"DMHY | {kw}" if kw else "動漫花園"
+        return f'DMHY - {kw}' if kw else feed.feed.get("title", "動漫花園")
 
     def _extract_fields(self, entry) -> dict:
         magnet = ""
@@ -135,6 +135,14 @@ class DmhyFormatter(DefaultFormatter):
             "description": entry.get("description", ""),
             "extra": magnet,
         }
+
+
+class AcgnxFormatter(DmhyFormatter):
+    """末日動漫資源庫 (AcgnX) — DMHY 镜像站，结构相同"""
+
+    def get_chan_title(self, feed, url: str) -> str:
+        kw = _get_url_param(url, "keyword")
+        return f'AcgnX - {kw}' if kw else feed.feed.get("title", "末日動漫資源庫")
 
 
 class MikanFormatter(DefaultFormatter):
@@ -160,6 +168,7 @@ class MikanFormatter(DefaultFormatter):
 FORMATTERS: dict[str, type[DefaultFormatter]] = {
     "nyaa.si": NyaaFormatter,
     "share.dmhy.org": DmhyFormatter,
+    "share.acgnx.se": AcgnxFormatter,
     "mikan.tangbai.cc": MikanFormatter,
 }
 

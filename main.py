@@ -13,6 +13,7 @@ from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
 import astrbot.api.message_components as Comp
 
+
 from .formatters import RSSItem, get_formatter
 
 
@@ -269,8 +270,7 @@ class MyRSSPlugin(Star):
             yield event.plain_result(
                 f"已更新订阅规则!\n"
                 f"频道: {self.data[url]['info']['title']}\n"
-                f"定时: {cron_expr}\n"
-                f"过滤: {filter_pattern or '无'}"
+                f"定时: {cron_expr}  过滤: {filter_pattern or '无'}"
             )
             return
 
@@ -283,8 +283,9 @@ class MyRSSPlugin(Star):
             yield event.plain_result("该地址不是有效的 RSS/Atom 源。")
             return
 
-        chan_title = feed.feed.get("title", "未知频道")
-        chan_desc = feed.feed.get("description", "") or "无描述"
+        # 频道名使用 formatter 的规则
+        formatter = get_formatter(url)
+        chan_title = formatter.get_chan_title(feed, url)
 
         # 以最新条目时间戳为起点，避免推送历史内容
         latest_ts, latest_link = int(time.time()), ""
@@ -296,7 +297,7 @@ class MyRSSPlugin(Star):
             latest_link = entry.get("link", "")
 
         if url not in self.data:
-            self.data[url] = {"info": {"title": chan_title, "description": chan_desc}, "subscribers": {}}
+            self.data[url] = {"info": {"title": chan_title}, "subscribers": {}}
         self.data[url]["subscribers"][user] = {
             "cron_expr": cron_expr, "filter": filter_pattern,
             "last_update": latest_ts, "latest_link": latest_link,
@@ -327,7 +328,7 @@ class MyRSSPlugin(Star):
             lines.append(
                 f"{i}. {info['info']['title']}\n"
                 f"   {url}\n"
-                f"   定时: {sub['cron_expr']}  |  过滤: {f or '无'}"
+                f"   定时: {sub['cron_expr']}  过滤: {f or '无'}"
             )
         yield event.plain_result("\n".join(lines))
 

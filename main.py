@@ -16,7 +16,7 @@ import astrbot.api.message_components as Comp
 from .formatters import RSSItem, get_formatter
 
 
-DATA_FILE = "/data/plugin_data/astrbot_plugin_myrss_data/astrbot_plugin_myrss_data.json"
+DATA_FILE = "/data/astrbot_plugin_myrss_data.json"
 
 
 def _load_metadata() -> dict:

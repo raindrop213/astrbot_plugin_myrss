@@ -295,8 +295,7 @@ class MyRSSPlugin(Star):
         yield event.plain_result(
             f"订阅成功!\n"
             f"频道: {chan_title}\n"
-            f"定时: {cron_expr}\n"
-            f"过滤: {filter_pattern or '无'}"
+            f"定时: {cron_expr}  过滤: {filter_pattern or '无'}"
         )
 
     @rss.command("list")

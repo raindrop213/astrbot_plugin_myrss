@@ -147,8 +147,8 @@ class MyRSSPlugin(Star):
         if not feed:
             return []
 
-        chan_title = feed.feed.get("title", "未知频道")
         formatter = get_formatter(url)
+        chan_title = formatter.get_chan_title(feed, url)
         items: list[RSSItem] = []
 
         for entry in feed.entries:

@@ -1,6 +1,6 @@
 name: astrbot_plugin_myrss
 display_name: MyRSS
 desc: 简单 RSS 订阅插件，支持直接 URL 订阅与 cron 定时推送
-version: v0.0.3
+version: v0.0.4
 author: raindrop213
 repo: "https://github.com/raindrop213/astrbot_plugin_myrss"

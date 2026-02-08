@@ -15,10 +15,23 @@ import astrbot.api.message_components as Comp
 from .formatters import RSSItem, get_formatter
 
 
-DATA_FILE = "data/astrbot_plugin_myrss_data.json"
+DATA_FILE = "/data/plugin_data/astrbot_plugin_myrss_data/astrbot_plugin_myrss_data.json"
 
 
-@register("astrbot_plugin_myrss", "YourName", "简单 RSS 订阅插件，支持 cron 定时推送", "1.0.0")
+def _load_metadata() -> dict:
+    """读取 metadata.yaml"""
+    meta = {}
+    path = os.path.join(os.path.dirname(__file__), "metadata.yaml")
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            if ":" in line and not line.startswith("#"):
+                key, _, value = line.partition(":")
+                meta[key.strip()] = value.strip().strip('"')
+    return meta
+
+_meta = _load_metadata()
+
+@register(_meta["name"], _meta["author"], _meta["desc"], _meta["version"].lstrip("v"))
 class MyRSSPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
